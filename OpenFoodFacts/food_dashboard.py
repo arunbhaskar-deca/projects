@@ -73,34 +73,51 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Information section
-with st.expander("ℹ️ About this Dashboard"):
-    st.markdown("""
-    ### Overview
-    This dashboard provides insights into food products data from the OpenFoodFacts database. It allows you to:
-    
+about_text = """
+## About this Dashboard
+
+### Data Sources and Performance
+This Open Food Facts dashboard provides comprehensive insights into food products across different countries.:
+
     - 📊 Analyze food products by country
     - 🏷️ View NutriScore distribution
     - 🏢 Explore top brands and categories
     - 🥗 Discover common ingredients
-    
-    ### Features
-    - **Data Source**: OpenFoodFacts API
-    - **Save/Load**: Save your analysis for later use
-    - **Visualizations**: Interactive charts powered by Plotly
-    
-    ### How to Use
-    1. Choose between loading saved data or fetching new data
-    2. If fetching new data, select a country and click "Fetch Data"
-    3. Explore the visualizations and insights
-    
-    ### Data Updates
-    - Data is fetched in real-time from OpenFoodFacts
-    - Each fetch is automatically saved for future reference
-    - View historical data by selecting from saved analyses
 
-    IMPORTANT NOTE:
-    Because of the rate limits of the OpenFoodFacts API, this dashboard is limited to 5 pages of data per country.
-    """)
+1. **Load Saved Data**: 
+   - Instantly access previously saved analysis results
+   - Ideal for quick revisits of past insights
+   - Minimal loading time
+
+2. **Get data from compressed CSV Database (recommended)**: 
+   - Balanced approach for data retrieval
+   - Compressed format ensures efficient data transfer
+   - Recommended for most use cases
+   - Moderate loading time with comprehensive data
+
+3. **Get Data from API Endpoint Search (slow)**: 
+   - Direct real-time data retrieval from Open Food Facts API
+   - Most up-to-date information
+   - Slower performance due to individual API calls and rate limits
+   - Under Development: Get food statistics based on keywords entered
+
+4. **Get data from Parquet Database (experimental)**: 
+   - Cutting-edge data retrieval using Apache Parquet format
+   - Designed for high-performance data processing
+   - Experimental feature with potential for faster large dataset handling
+   - May have limitations in current implementation
+
+### Technical Details
+- **Data Source**: Open Food Facts Global Product Database
+- **Update Frequency**: Regularly updated from global crowdsourced data
+- **Technologies**: Streamlit, Pandas, PyArrow, Supabase
+
+### Privacy and Transparency
+All data is sourced from the Open Food Facts public database. Personal information is never collected or stored.
+"""
+
+with st.expander("ℹ️ About this Dashboard"):
+    st.markdown(about_text)
 
 # Function to fetch data using OpenFoodFacts API
 def fetch_products_by_country(country_code, page_size=100):
@@ -521,9 +538,9 @@ mode = st.radio(
     "Select Mode", 
     [
         "Load Saved Data",
+        "Get data from compressed CSV Database (recommended)",
         "Get Data from API Endpoint Search (slow)",
-        "Get data from compressed CSV Database (.gz)",
-        "Get data from Parquet Database (fast)"
+        "Get data from Parquet Database (experimental)"
     ]
 )
 
