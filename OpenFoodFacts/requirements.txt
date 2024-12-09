@@ -8,3 +8,4 @@ pyarrow
 requests
 tqdm
 fsspec
+aiohttp
