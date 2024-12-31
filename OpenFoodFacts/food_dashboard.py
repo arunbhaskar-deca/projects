@@ -10,12 +10,7 @@ import os
 from supabase import create_client
 from dotenv import load_dotenv
 import gzip
-import io
-import pandas as pd
-import requests
-from tqdm import tqdm
-import tempfile
-from pathlib import Path
+from groq import Groq
 
 # Load environment variables
 load_dotenv()
@@ -30,6 +25,11 @@ if not supabase_url or not supabase_key:
     supabase_key = st.secrets["SUPABASE_KEY"]
 
 supabase = create_client(supabase_url, supabase_key)
+
+# Initialize OpenAI API
+groq_client = Groq(
+    api_key=os.getenv("GROQ_API_KEY"),
+)
 
 # Set page config for a wider layout
 st.set_page_config(layout="wide", page_title="Food Products Dashboard")
@@ -195,15 +195,34 @@ def fetch_products_from_csv(country_code):
                 # Process file and extract matching lines
                 with open(temp_file_path, 'w', encoding='utf-8') as temp_file:
                     temp_file.write(header + '\n')
-                    
-                    with gzip.open(dataset_path, 'rt', encoding='utf-8', errors='replace') as f:
+
+                    buffer_size = 1000  # Number of lines to buffer before writing
+                    buffer = []
+                    lower_country_tag = country_tag.lower()
+                    matching_products = 0
+
+                    with gzip.open(dataset_path, 'rt', encoding='utf-8') as f:
                         next(f)  # Skip header
                         for line in f:
-                            if country_tag.lower() in line:
-                                temp_file.write(line)
+                            if lower_country_tag in line.lower():
+                                buffer.append(line)
                                 matching_products += 1
-                                if matching_products % 100 == 0:
+                                
+                                # Write buffer to file if it reaches the buffer size
+                                if len(buffer) >= buffer_size:
+                                    temp_file.writelines(buffer)
+                                    buffer.clear()
+                                
+                                # Update progress bar periodically
+                                if matching_products % 1000 == 0:
                                     progress_bar.progress(0, f"Found {matching_products} products...")
+                        
+                        # Write any remaining lines in the buffer
+                        if buffer:
+                            temp_file.writelines(buffer)
+
+                    # Final progress update (if needed)
+                    progress_bar.progress(1, f"Completed: Found {matching_products} products.")
                 
                 if matching_products == 0:
                     st.warning(f"No products found for {country_code} in the CSV dump")
@@ -387,6 +406,92 @@ def save_data(products, country, timestamp):
         st.error(f"Error saving data: {str(e)}")
         return False
 
+def plot_graph_data(graph_data):
+    # Create two columns for the layout
+    col1, col2 = st.columns(2)
+    
+    # 1. NutriScore Distribution
+    with col1:
+        st.subheader("NutriScore Distribution")
+        nutri_score_counts = graph_data['nutriscore_distribution']
+        
+        # Sort the scores in ascending order (A to E, with X at the end)
+        sorted_scores = sorted(nutri_score_counts.items(), key=lambda x: ('X' if x[0] == 'X' else x[0]))
+        
+        fig1 = go.Figure(data=[
+            go.Bar(
+                x=[score[0] for score in sorted_scores],
+                y=[score[1] for score in sorted_scores],
+                marker_color=['#2ecc71', '#27ae60', '#f1c40f', '#e67e22', '#e74c3c', '#95a5a6'],
+            )
+        ])
+        fig1.update_layout(
+            title_text="Distribution of NutriScore",
+            xaxis_title="NutriScore",
+            yaxis_title="Number of Products",
+            template="plotly_white"
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+    
+    # 2. Top 5 Brands
+    with col2:
+        st.subheader("Top 5 Food Brands")
+        top_brands = graph_data['top_brands']
+        
+        fig2 = go.Figure(data=[
+            go.Pie(
+                labels=[brand[0] for brand in top_brands],
+                values=[brand[1] for brand in top_brands],
+                hole=.3
+            )
+        ])
+        fig2.update_layout(
+            title_text="Top 5 Brands by Product Count",
+            template="plotly_white"
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+    
+    # 3. Top 5 Categories
+    with col1:
+        st.subheader("Top 5 Food Categories")
+        top_categories = graph_data['top_categories']
+        
+        fig3 = go.Figure(data=[
+            go.Bar(
+                x=[cat[1] for cat in top_categories],
+                y=[cat[0] for cat in top_categories],
+                orientation='h',
+                marker_color=['#2ecc71', '#3498db', '#e74c3c', '#f1c40f', '#9b59b6']  # Green, Blue, Red, Yellow, Purple
+            )
+        ])
+        fig3.update_layout(
+            title_text="Top 5 Categories by Product Count",
+            xaxis_title="Number of Products",
+            yaxis_title="Category",
+            template="plotly_white"
+        )
+        st.plotly_chart(fig3, use_container_width=True)
+    
+    # 4. Top 5 Ingredients
+    with col2:
+        st.subheader("Top 5 Ingredients")
+        top_ingredients = graph_data['top_ingredients']
+        
+        fig4 = go.Figure(data=[
+            go.Bar(
+                x=[ing[1] for ing in top_ingredients],
+                y=[ing[0] for ing in top_ingredients],
+                orientation='h',
+                marker_color=['#e67e22', '#16a085', '#8e44ad', '#d35400', '#27ae60']  # Orange, Turquoise, Purple, Dark Orange, Dark Green
+            )
+        ])
+        fig4.update_layout(
+            title_text="Top 5 Ingredients",
+            xaxis_title="Frequency",
+            yaxis_title="Ingredient",
+            template="plotly_white"
+        )
+        st.plotly_chart(fig4, use_container_width=True)
 def load_saved_data():
     """Load saved graph data from Supabase"""
     try:
@@ -428,94 +533,10 @@ def load_saved_data():
         # Parse the graph data
         graph_data = json.loads(selected_entry['graph_data'])
         
-        # Create two columns for the layout
-        col1, col2 = st.columns(2)
-        
-        # 1. NutriScore Distribution
-        with col1:
-            st.subheader("NutriScore Distribution")
-            nutri_score_counts = graph_data['nutriscore_distribution']
-            
-            # Sort the scores in ascending order (A to E, with X at the end)
-            sorted_scores = sorted(nutri_score_counts.items(), key=lambda x: ('X' if x[0] == 'X' else x[0]))
-            
-            fig1 = go.Figure(data=[
-                go.Bar(
-                    x=[score[0] for score in sorted_scores],
-                    y=[score[1] for score in sorted_scores],
-                    marker_color=['#2ecc71', '#27ae60', '#f1c40f', '#e67e22', '#e74c3c', '#95a5a6'],
-                )
-            ])
-            fig1.update_layout(
-                title_text="Distribution of NutriScore",
-                xaxis_title="NutriScore",
-                yaxis_title="Number of Products",
-                template="plotly_white"
-            )
-            st.plotly_chart(fig1, use_container_width=True)
-        
-        # 2. Top 5 Brands
-        with col2:
-            st.subheader("Top 5 Food Brands")
-            top_brands = graph_data['top_brands']
-            
-            fig2 = go.Figure(data=[
-                go.Pie(
-                    labels=[brand[0] for brand in top_brands],
-                    values=[brand[1] for brand in top_brands],
-                    hole=.3
-                )
-            ])
-            fig2.update_layout(
-                title_text="Top 5 Brands by Product Count",
-                template="plotly_white"
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-        
-        # 3. Top 5 Categories
-        with col1:
-            st.subheader("Top 5 Food Categories")
-            top_categories = graph_data['top_categories']
-            
-            fig3 = go.Figure(data=[
-                go.Bar(
-                    x=[cat[1] for cat in top_categories],
-                    y=[cat[0] for cat in top_categories],
-                    orientation='h',
-                    marker_color=['#2ecc71', '#3498db', '#e74c3c', '#f1c40f', '#9b59b6']  # Green, Blue, Red, Yellow, Purple
-                )
-            ])
-            fig3.update_layout(
-                title_text="Top 5 Categories by Product Count",
-                xaxis_title="Number of Products",
-                yaxis_title="Category",
-                template="plotly_white"
-            )
-            st.plotly_chart(fig3, use_container_width=True)
-        
-        # 4. Top 5 Ingredients
-        with col2:
-            st.subheader("Top 5 Ingredients")
-            top_ingredients = graph_data['top_ingredients']
-            
-            fig4 = go.Figure(data=[
-                go.Bar(
-                    x=[ing[1] for ing in top_ingredients],
-                    y=[ing[0] for ing in top_ingredients],
-                    orientation='h',
-                    marker_color=['#e67e22', '#16a085', '#8e44ad', '#d35400', '#27ae60']  # Orange, Turquoise, Purple, Dark Orange, Dark Green
-                )
-            ])
-            fig4.update_layout(
-                title_text="Top 5 Ingredients",
-                xaxis_title="Frequency",
-                yaxis_title="Ingredient",
-                template="plotly_white"
-            )
-            st.plotly_chart(fig4, use_container_width=True)
+        plot_graph_data(graph_data)
         
         # Return minimal data structure for compatibility
-        return [], selected_entry['country'], timestamp
+        return graph_data, selected_entry['country'], timestamp
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return None, None, None
@@ -528,6 +549,47 @@ def delete_saved_data(display_name):
     except Exception as e:
         st.error(f"Error deleting data: {str(e)}")
         return False
+
+# Function to query the LLM
+def query_llm(prompt):
+    # Use the new ChatCompletion API
+    chat_completion = groq_client.chat.completions.create(
+    messages=[
+        {
+            "role": "user",
+            "content": prompt,
+        }
+    ],
+    model="llama-3.3-70b-versatile")
+   
+    # Extract and return the assistant's response
+    return chat_completion.choices[0].message.content
+
+# Function to handle chatbot queries
+def handle_chatbot_query(query, graph_data):
+    if any(keyword in query.lower() for keyword in ["nutriscore", "brands", "categories", "ingredients"]):
+        prompt = f"Here is the data from the graphs: {json.dumps(graph_data)}. Answer the following question: {query}"
+        return query_llm(prompt)
+    else:
+        return "Please ask questions only related to the data presented."
+
+# Extract graph data
+def get_graph_data(products):
+    nutri_scores = [p.get('nutriscore_grade', 'unknown').upper() for p in products if p.get('nutriscore_grade')]
+    nutri_score_counts = dict(Counter(nutri_scores))
+    brands = [item for p in products for item in p.get('brands', '').split(',') if item]
+    top_brands = Counter(brands).most_common(5)
+    categories = [cat.replace('en:', '') for p in products for cat in p.get('categories_tags', '').split(",") if cat]
+    top_categories = Counter(categories).most_common(5)
+    ingredients = [ing.replace('en:', '') for p in products for ing in p.get('ingredients_tags', '').split(",") if ing]
+    top_ingredients = Counter(ingredients).most_common(5)
+    
+    return {
+        'nutriscore_distribution': nutri_score_counts,
+        'top_brands': top_brands,
+        'top_categories': top_categories,
+        'top_ingredients': top_ingredients
+    }
 
 # Initialize session state for products if not exists
 if 'products' not in st.session_state:
@@ -546,13 +608,11 @@ mode = st.radio(
 
 if mode == "Load Saved Data":
     # Load saved data
-    loaded_products, loaded_country, loaded_timestamp = load_saved_data()
-    if loaded_products:
-        st.session_state.products = loaded_products
-        products = loaded_products
+    graph_data, loaded_country, loaded_timestamp = load_saved_data()
+    if graph_data:
+        st.session_state.graph_data = graph_data
     else:
-        st.session_state.products = None
-        products = None
+        st.session_state.graph_data = None
 else:
     # Country selection
     countries = {}
@@ -582,7 +642,7 @@ else:
                     timestamp = datetime.now()
                     save_data(st.session_state.products, selected_country_name, timestamp)
     
-    elif mode == "Get data from compressed CSV Database (.gz)":
+    elif mode == "Get data from compressed CSV Database (recommended)":
         selected_country_name = st.selectbox("Select a Country", options, index=options.index(def_option))
         fetch_col1, fetch_col2 = st.columns([4, 1])
         
@@ -599,7 +659,7 @@ else:
                     timestamp = datetime.now()
                     save_data(st.session_state.products, selected_country_name, timestamp)
     
-    elif mode == "Get data from Parquet Database (fast)":
+    elif mode == "Get data from Parquet Database (experimental)":
         selected_country_name = st.selectbox("Select a Country", options, index=options.index(def_option))
         fetch_col1, fetch_col2 = st.columns([4, 1])
         
@@ -619,93 +679,19 @@ else:
 # Only show visualizations if we have products
 if st.session_state.products:
     products = st.session_state.products
-    # Create two columns for the layout
-    col1, col2 = st.columns(2)
+    graph_data = get_graph_data(products)
+    st.session_state.graph_data = graph_data
 
-    # 1. NutriScore Distribution
-    with col1:
-        st.subheader("NutriScore Distribution")
-        nutri_scores = [p.get('nutriscore_grade','X') for p in products]
-        nutri_score_counts = Counter(nutri_scores)
-        
-        # Sort the scores in ascending order (A to E, with X at the end)
-        sorted_scores = sorted(nutri_score_counts.items(), key=lambda x: ('X' if x[0] == 'X' else x[0]))
-        
-        fig1 = go.Figure(data=[
-            go.Bar(
-                x=[score[0] for score in sorted_scores],
-                y=[score[1] for score in sorted_scores],
-                marker_color=['#2ecc71', '#27ae60', '#f1c40f', '#e67e22', '#e74c3c', '#95a5a6'],
-            )
-        ])
-        fig1.update_layout(
-            title_text="Distribution of NutriScore",
-            xaxis_title="NutriScore",
-            yaxis_title="Number of Products",
-            template="plotly_white"
-        )
-        st.plotly_chart(fig1, use_container_width=True)
-
-    # 2. Top 5 Brands
-    with col2:
-        st.subheader("Top 5 Food Brands")
-        brands = [item for sublist in products for item in sublist.get('brands', '').split(',') if item]
-        top_brands = Counter(brands).most_common(5)
-        
-        fig2 = go.Figure(data=[
-            go.Pie(
-                labels=[brand[0] for brand in top_brands],
-                values=[brand[1] for brand in top_brands],
-                hole=.3
-            )
-        ])
-        fig2.update_layout(
-            title_text="Top 5 Brands by Product Count",
-            template="plotly_white"
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-
-    # 3. Top 5 Categories
-    with col1:
-        st.subheader("Top 5 Food Categories")
-        categories = []
-        categories.extend([cat.replace('en:', '') for proddict in products for cat in proddict.get('categories_tags', '').split(",") if cat])
-        top_categories = Counter(categories).most_common(5)
-        
-        fig3 = go.Figure(data=[
-            go.Bar(
-                x=[cat[1] for cat in top_categories],
-                y=[cat[0] for cat in top_categories],
-                orientation='h',
-                marker_color=['#2ecc71', '#3498db', '#e74c3c', '#f1c40f', '#9b59b6']  # Green, Blue, Red, Yellow, Purple
-            )
-        ])
-        fig3.update_layout(
-            title_text="Top 5 Categories by Product Count",
-            xaxis_title="Number of Products",
-            yaxis_title="Category",
-            template="plotly_white"
-        )
-        st.plotly_chart(fig3, use_container_width=True)
-
-    # 4. Top 5 Ingredients
-    with col2:
-        st.subheader("Top 5 Ingredients")
-        ingredients = [ing.replace('en:', '') for proddict in products for ing in proddict.get('ingredients_tags', '').split(",") if ing]
-        top_ingredients = Counter(ingredients).most_common(5)
-        
-        fig4 = go.Figure(data=[
-            go.Bar(
-                x=[ing[1] for ing in top_ingredients],
-                y=[ing[0] for ing in top_ingredients],
-                orientation='h',
-                marker_color=['#e67e22', '#16a085', '#8e44ad', '#d35400', '#27ae60']  # Orange, Turquoise, Purple, Dark Orange, Dark Green
-            )
-        ])
-        fig4.update_layout(
-            title_text="Top 5 Ingredients",
-            xaxis_title="Frequency",
-            yaxis_title="Ingredient",
-            template="plotly_white"
-        )
-        st.plotly_chart(fig4, use_container_width=True)
+    # Display graph data
+    plot_graph_data(graph_data)
+    
+# Add chatbot interface
+st.sidebar.header("Chatbot")
+user_query = st.sidebar.text_input("Ask a question about the graphs:")
+if st.sidebar.button("Submit"):
+    if  st.session_state.graph_data:
+        graph_data = st.session_state.graph_data
+        response = handle_chatbot_query(user_query, graph_data)
+        st.sidebar.write(response)
+    else:
+        st.sidebar.write("No data available to answer the query.")
