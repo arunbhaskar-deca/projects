@@ -687,11 +687,23 @@ if st.session_state.products:
     
 # Add chatbot interface
 st.sidebar.header("Chatbot")
-user_query = st.sidebar.text_input("Ask a question about the graphs:")
+user_query = st.sidebar.text_area(
+    "Ask a question about the graphs: \nPrefix your question with 'nutriscore:', 'brands:', 'categories:' or 'ingredients:' to answer questions related to specific graph. [Powered by Llama-3.3-70b-versatile]",
+    height=150,
+    value="brands: What can you say about the market share distribution?"
+)
 if st.sidebar.button("Submit"):
-    if  st.session_state.graph_data:
+    if st.session_state.graph_data:
+        # Create a placeholder for the loading message
+        loading_placeholder = st.sidebar.empty()
+        loading_placeholder.write("Please wait. Insights coming right away ...")
+        
+        # Process the data
         graph_data = st.session_state.graph_data
         response = handle_chatbot_query(user_query, graph_data)
+        
+        # Clear the loading message and display the response
+        loading_placeholder.empty()
         st.sidebar.write(response)
     else:
         st.sidebar.write("No data available to answer the query.")
